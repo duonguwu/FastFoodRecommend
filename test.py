@@ -8,7 +8,7 @@ from scipy.stats import norm
 app = FastAPI(title="Food Recommendation System API")
 
 # Load data
-df = pd.read_csv("fastfood.csv")
+df = pd.read_csv("fastfood_postprocess.csv")
 
 class BayesianRecommender:
     def __init__(self, data, variables):
@@ -22,6 +22,7 @@ class BayesianRecommender:
         for col in self.variables:
             min_val = self.data[col].min()
             max_val = self.data[col].max()
+            normalized[col] = self.data[col].fillna(0)
             normalized[col] = (self.data[col] - min_val) / (max_val - min_val)
         return normalized
     
@@ -113,15 +114,17 @@ class RecommendationRequest(BaseModel):
     form_data: Dict = Field(..., description="Form data based on selected topic")
 
 class NutritionalInfo(BaseModel):
-    calories: float
-    total_fat: Optional[float]
-    sat_fat: Optional[float]
-    trans_fat: Optional[float]
-    cholesterol: Optional[float]
-    sodium: Optional[float]
-    total_carb: Optional[float]
-    sugar: Optional[float]
-    protein: Optional[float]
+    calories: float = 0.0
+    total_fat: float = 0.0
+    sat_fat: float = 0.0
+    trans_fat: float = 0.0
+    cholesterol: float = 0.0
+    sodium: float = 0.0
+    total_carb: float = 0.0
+    sugar: float = 0.0
+    protein: float = 0.0
+
+
 
 class FoodRecommendation(BaseModel):
     item: str
@@ -154,15 +157,25 @@ def process_recommendations(topic_id: int, form_data: Dict, restaurants: Optiona
         top_n=5
     )
     
-    return [
-        FoodRecommendation(
-            item=rec['item'],
-            restaurant=rec['restaurant'],
-            nutritional_info=NutritionalInfo(**rec['nutritional_info']),
-            match_score=float(rec['match_score'])
+    processed_recommendations = []
+    for rec in recommendations:
+        # Đảm bảo không có giá trị `None` trước khi truyền vào NutritionalInfo
+        nutritional_info = {
+            key: (value if value != 0 else 0.0)  # Giá trị 0 giữ nguyên, không chuyển thành None
+            for key, value in rec['nutritional_info'].items()
+        }
+        
+        processed_recommendations.append(
+            FoodRecommendation(
+                item=rec['item'],
+                restaurant=rec['restaurant'],
+                nutritional_info=NutritionalInfo(**nutritional_info),
+                match_score=float(rec['match_score'])
+            )
         )
-        for rec in recommendations
-    ]
+    
+    return processed_recommendations
+
 
 @app.post("/api/recommend", response_model=RecommendationResponse)
 async def get_recommendations(request: RecommendationRequest):
