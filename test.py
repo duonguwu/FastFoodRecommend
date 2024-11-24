@@ -7,6 +7,20 @@ from scipy.stats import norm
 
 app = FastAPI(title="Food Recommendation System API")
 
+# Mở CORS cho phép tất cả domain
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Cho phép tất cả các domain
+    allow_credentials=True,
+    allow_methods=["*"],  # Cho phép tất cả các phương thức HTTP (GET, POST, PUT, DELETE, ...)
+    allow_headers=["*"],  # Cho phép tất cả các header
+)
+
+# Các endpoint của bạn ở đây
+@app.get("/")
+def read_root():
+    return {"message": "Hello World"}
+
 # Load data
 df = pd.read_csv("fastfood_postprocess.csv")
 
