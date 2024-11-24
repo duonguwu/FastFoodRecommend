@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
 import pandas as pd
 import numpy as np
+from fastapi.middleware.cors import CORSMiddleware
 from scipy.stats import norm
 
 app = FastAPI(title="Food Recommendation System API")
