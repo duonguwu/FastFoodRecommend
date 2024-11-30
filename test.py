@@ -1,11 +1,23 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict
 import pandas as pd
 import numpy as np
-from fastapi.middleware.cors import CORSMiddleware
-from scipy.stats import norm
+import os
+import google.generativeai as genai
 
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from scipy.stats import norm  
+from typing import List, Optional, Dict
+from dotenv import load_dotenv
+
+from prompt_generator import * 
+
+load_dotenv()
+
+genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+
+model = genai.GenerativeModel(model_name="gemini-1.5-flash-8b")
+      
 app = FastAPI(title="Food Recommendation System API")
 
 # Mở CORS cho phép tất cả domain
@@ -147,6 +159,11 @@ class FoodRecommendation(BaseModel):
     nutritional_info: NutritionalInfo
     match_score: float
 
+class RecommendationResponseAI(BaseModel):
+    topic_name: str
+    goal: str
+    recommendation_text: str
+
 class RecommendationResponse(BaseModel):
     success: bool
     message: str
@@ -172,13 +189,36 @@ def process_recommendations(topic_id: int, form_data: Dict, restaurants: Optiona
         top_n=5
     )
     
+    # Lấy ra danh sách các món ăn từ khuyến nghị
+    recommended_items = [rec['item'] for rec in recommendations]
+    
+    # Đọc dữ liệu từ file CSV (giả sử bạn có DataFrame chứa dữ liệu món ăn)
+    df = pd.read_csv("fastfood_postprocess.csv")
+    
+    # Lọc các món ăn khuyến nghị từ DataFrame
+    recommended_data = df[df['item'].isin(recommended_items)]
+    
     processed_recommendations = []
+    
+    # Duyệt qua các món ăn khuyến nghị và lấy thông tin dinh dưỡng
     for rec in recommendations:
-        # Đảm bảo không có giá trị `None` trước khi truyền vào NutritionalInfo
+        # Lọc thông tin dinh dưỡng của món ăn trong recommended_data
+        item_data = recommended_data[recommended_data['item'] == rec['item']].iloc[0]
+        
+        # Đảm bảo không có giá trị None, sử dụng giá trị trong item_data từ DataFrame
         nutritional_info = {
-            key: (value if value != 0 else 0.0)  # Giá trị 0 giữ nguyên, không chuyển thành None
-            for key, value in rec['nutritional_info'].items()
+            'calories': item_data['calories'] if not pd.isnull(item_data['calories']) else 0.0,
+            'total_fat': item_data['total_fat'] if not pd.isnull(item_data['total_fat']) else 0.0,
+            'sat_fat': item_data['sat_fat'] if not pd.isnull(item_data['sat_fat']) else 0.0,
+            'trans_fat': item_data['trans_fat'] if not pd.isnull(item_data['trans_fat']) else 0.0,
+            'cholesterol': item_data['cholesterol'] if not pd.isnull(item_data['cholesterol']) else 0.0,
+            'sodium': item_data['sodium'] if not pd.isnull(item_data['sodium']) else 0.0,
+            'total_carb': item_data['total_carb'] if not pd.isnull(item_data['total_carb']) else 0.0,
+            'sugar': item_data['sugar'] if not pd.isnull(item_data['sugar']) else 0.0,
+            'protein': item_data['protein'] if not pd.isnull(item_data['protein']) else 0.0
         }
+        
+        print("nutritional_info", nutritional_info)
         
         processed_recommendations.append(
             FoodRecommendation(
@@ -191,6 +231,7 @@ def process_recommendations(topic_id: int, form_data: Dict, restaurants: Optiona
     
     return processed_recommendations
 
+prompt = ""
 
 @app.post("/api/recommend", response_model=RecommendationResponse)
 async def get_recommendations(request: RecommendationRequest):
@@ -214,6 +255,86 @@ async def get_recommendations(request: RecommendationRequest):
             success=True,
             message="Recommendations generated successfully",
             recommendations=recommendations
+        )
+        
+    except Exception as e:
+        return RecommendationResponse(
+            success=False,
+            message=str(e),
+            recommendations=[]
+        )
+
+@app.post("/api/ai_recommend", response_model=RecommendationResponseAI)
+async def get_recommendations_ai(request: RecommendationRequest):
+    try:
+        # Validate topic_id
+        if request.topic_id not in range(1, 6):
+            raise HTTPException(status_code=400, detail="Invalid topic ID")
+            
+        # Validate restaurants (if provided)
+        if request.restaurants and len(request.restaurants) > 3:
+            raise HTTPException(status_code=400, detail="Maximum 3 restaurants allowed")
+            
+        # Process recommendations based on topic
+        recommendations = process_recommendations(
+            topic_id=request.topic_id,
+            form_data=request.form_data,
+            restaurants=request.restaurants
+        )
+
+        # Xác định tên chủ đề và mục tiêu tương ứng
+        if request.topic_id == 1:
+            topic_name = "Quản lý cân nặng"
+            variables, goal = handle_topic_weight_management(request.form_data)
+        elif request.topic_id == 2:
+            topic_name = "Sức khỏe tim mạch"
+            variables, goal = handle_topic_heart_health(request.form_data)
+        elif request.topic_id == 3:
+            topic_name = "Chế độ ăn giàu protein"
+            variables, goal = handle_topic_high_protein(request.form_data)
+        elif request.topic_id == 4:
+            topic_name = "Hạn chế sodium"
+            variables, goal = handle_topic_sodium_reduction(request.form_data)
+        elif request.topic_id == 5:
+            topic_name = "Chế độ ăn kiêng đặc biệt"
+            variables, goal = handle_topic_special_diet(request.form_data)
+        else:
+            topic_name = "Không xác định" 
+
+        # Tạo dữ liệu người dùng
+        user_data = {
+            'topic_name': topic_name,  
+            'form_data': request.form_data,
+            'goal': goal,
+            'variables': variables,  
+            'meals': [
+                {
+                    'name': rec.item,
+                    'calories': rec.nutritional_info.calories,
+                    'total_fat': rec.nutritional_info.total_fat,
+                    'sat_fat': rec.nutritional_info.sat_fat,
+                    'trans_fat': rec.nutritional_info.trans_fat,
+                    'cholesterol': rec.nutritional_info.cholesterol,
+                    'sodium': rec.nutritional_info.sodium,
+                    'total_carb': rec.nutritional_info.total_carb,
+                    'sugar': rec.nutritional_info.sugar,
+                    'protein': rec.nutritional_info.protein
+                } for rec in recommendations
+            ]
+        }
+        
+        # Tạo prompt cho người dùng
+        prompt = generate_prompt(user_data, request.topic_id)
+        print("Generated Prompt: ", prompt)
+
+        ai_response = model.generate_content(prompt)
+        print("AI Response: ", ai_response)
+
+        # Trả về kết quả với format mới
+        return RecommendationResponseAI(
+            topic_name=user_data['topic_name'],
+            goal=goal,
+            recommendation_text=ai_response.text
         )
         
     except Exception as e:
