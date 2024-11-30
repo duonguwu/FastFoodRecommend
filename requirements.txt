@@ -4,6 +4,6 @@ pandas
 numpy
 scipy
 uvicorn
-google-cloud-aiplatform
+google-generativeai
 python-dotenv
       
