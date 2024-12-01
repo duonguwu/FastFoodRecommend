@@ -3,8 +3,12 @@ import numpy as np
 import os
 import google.generativeai as genai
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
+
 from pydantic import BaseModel, Field
 from scipy.stats import norm  
 from typing import List, Optional, Dict
@@ -29,10 +33,15 @@ app.add_middleware(
     allow_headers=["*"],  # Cho phép tất cả các header
 )
 
+# Mount static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+templates = Jinja2Templates(directory="templates")
+
 # Các endpoint của bạn ở đây
-@app.get("/")
-def read_root():
-    return {"message": "Hello World"}
+@app.get("/", response_class=HTMLResponse)
+async def read_root(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
 
 # Load data
 df = pd.read_csv("fastfood_postprocess.csv")

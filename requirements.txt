@@ -6,4 +6,4 @@ scipy
 uvicorn
 google-generativeai
 python-dotenv
-      
+jinja2
